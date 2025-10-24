@@ -3,8 +3,19 @@ import { v4 as uuid } from "uuid";
 import { exportPdf } from "@/export/pdf";
 import { TimekeepSettings } from "@/settings";
 import { extractTimekeepCodeblocks } from "@/timekeep/parser";
-import { Timekeep, stripTimekeepRuntimeData } from "@/timekeep/schema";
-import { App, TFile, Modal, TextComponent, ButtonComponent, Setting } from "obsidian";
+import {
+	Timekeep,
+	TimeEntry,
+	stripTimekeepRuntimeData,
+} from "@/timekeep/schema";
+import {
+	App,
+	TFile,
+	Modal,
+	TextComponent,
+	ButtonComponent,
+	Setting,
+} from "obsidian";
 
 interface TimekeepResult {
 	timekeep: Timekeep;
@@ -60,8 +71,8 @@ export class TimekeepMergerModal extends Modal {
 
 		new Setting(this.contentEl)
 			.setName("Select All")
-			.addToggle(toggle => {
-				toggle.onChange(checked => {
+			.addToggle((toggle) => {
+				toggle.onChange((checked) => {
 					if (checked) {
 						this.selectedResults = [...this.filteredResults];
 					} else {
@@ -70,7 +81,6 @@ export class TimekeepMergerModal extends Modal {
 					this.renderList();
 				});
 			});
-
 
 		this.listContainer = this.contentEl.createDiv();
 		this.listContainer.style.maxHeight = "400px";
@@ -94,10 +104,32 @@ export class TimekeepMergerModal extends Modal {
 				};
 
 				for (const result of this.selectedResults) {
-					timekeep.entries = [
-						...timekeep.entries,
-						...result.timekeep.entries,
-					];
+					const processEntries = (
+						entries: TimeEntry[],
+						filePath: string
+					): TimeEntry[] => {
+						return entries.map((entry) => {
+							const newSubEntries = entry.subEntries
+								? processEntries(entry.subEntries, filePath)
+								: null;
+							const fileName = filePath.substring(
+								0,
+								filePath.lastIndexOf(".")
+							);
+							return {
+								...entry,
+								name: `[[${fileName}]] - ${entry.name}`,
+								subEntries: newSubEntries,
+							};
+						});
+					};
+
+					const newEntries = processEntries(
+						result.timekeep.entries,
+						result.file.path
+					);
+
+					timekeep.entries = [...timekeep.entries, ...newEntries];
 				}
 
 				// Close after taking the results as closing resets the list
