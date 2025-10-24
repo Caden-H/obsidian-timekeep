@@ -112,23 +112,38 @@ export class TimekeepMergerModal extends Modal {
 				};
 				
 				let allEntries: TimeEntry[] = [];
+
+				// Recursive function to process entries and sub-entries, preserving parent context in the name
+				const processEntries = (entries: TimeEntry[], filePath: string, parentNameChain: string[] = []) => {
+					for (const entry of entries) {
+						// If it's a timed entry (not a group)
+						if (entry.startTime && typeof entry.startTime.valueOf === 'function') {
+							const nameParts = [...parentNameChain, entry.name];
+							const newName = `[[${filePath}]] - ${nameParts.join(' / ')}`;
+							allEntries.push({
+								...entry,
+								name: newName,
+								subEntries: null, // Flatten the structure
+							});
+						}
+
+						// If it's a group with sub-entries, recurse
+						if (entry.subEntries && entry.subEntries.length > 0) {
+							const newParentNameChain = [...parentNameChain, entry.name];
+							processEntries(entry.subEntries, filePath, newParentNameChain);
+						}
+					}
+				};
+
 				for (const result of this.selectedResults) {
 					const filePath = result.file.path.replace(/\.md$/, '');
-					const entriesWithFileName = result.timekeep.entries.map(entry => ({
-						...entry,
-						name: `[[${filePath}]] - ${entry.name}`,
-					}));
-					allEntries.push(...entriesWithFileName);
+					processEntries(result.timekeep.entries, filePath);
 				}
-
-				// Filter for entries that have a valid startTime
-				let startedEntries = allEntries.filter(entry => entry.startTime && typeof entry.startTime.valueOf === 'function');
-
 
 				const startDate = this.startDateInput?.getValue();
 				const endDate = this.endDateInput?.getValue();
 
-				let filteredEntries = startedEntries;
+				let filteredEntries = allEntries;
 
 				if (startDate && endDate) {
 					const startParts = startDate.split('-').map(p => parseInt(p, 10));
@@ -142,7 +157,7 @@ export class TimekeepMergerModal extends Modal {
 						return;
 					}
 
-					filteredEntries = startedEntries.filter(entry => {
+					filteredEntries = allEntries.filter(entry => {
 						const entryStartTime = entry.startTime!.valueOf();
 						return entryStartTime >= startTime && entryStartTime <= endTime;
 					});
