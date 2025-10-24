@@ -3,19 +3,8 @@ import { v4 as uuid } from "uuid";
 import { exportPdf } from "@/export/pdf";
 import { TimekeepSettings } from "@/settings";
 import { extractTimekeepCodeblocks } from "@/timekeep/parser";
-import {
-	Timekeep,
-	TimeEntry,
-	stripTimekeepRuntimeData,
-} from "@/timekeep/schema";
-import {
-	App,
-	TFile,
-	Modal,
-	TextComponent,
-	ButtonComponent,
-	Setting,
-} from "obsidian";
+import { Timekeep, stripTimekeepRuntimeData, TimeEntry } from "@/timekeep/schema";
+import { App, TFile, Modal, TextComponent, ButtonComponent, Setting, Notice } from "obsidian";
 
 interface TimekeepResult {
 	timekeep: Timekeep;
@@ -31,6 +20,8 @@ export class TimekeepMergerModal extends Modal {
 
 	private listContainer: HTMLElement | undefined;
 	private searchInput: TextComponent | undefined;
+	private startDateInput: TextComponent | undefined;
+	private endDateInput: TextComponent | undefined;
 	private loadingEl: HTMLElement | undefined;
 	private exportPdf: boolean;
 	private settings: Store<TimekeepSettings>;
@@ -60,6 +51,22 @@ export class TimekeepMergerModal extends Modal {
 		this.loadingEl.style.marginBottom = "1rem";
 		this.loadingEl.style.opacity = "0.7";
 
+		// Date Range Inputs
+		new Setting(this.contentEl)
+			.setName("Start Date")
+			.addText(text => {
+				text.inputEl.type = 'date';
+				this.startDateInput = text;
+			});
+
+		new Setting(this.contentEl)
+			.setName("End Date")
+			.addText(text => {
+				text.inputEl.type = 'date';
+				this.endDateInput = text;
+			});
+
+
 		this.searchInput = new TextComponent(this.contentEl);
 		this.searchInput.setPlaceholder("Search by file path...");
 		this.searchInput.inputEl.style.width = "100%";
@@ -71,8 +78,8 @@ export class TimekeepMergerModal extends Modal {
 
 		new Setting(this.contentEl)
 			.setName("Select All")
-			.addToggle((toggle) => {
-				toggle.onChange((checked) => {
+			.addToggle(toggle => {
+				toggle.onChange(checked => {
 					if (checked) {
 						this.selectedResults = [...this.filteredResults];
 					} else {
@@ -81,6 +88,7 @@ export class TimekeepMergerModal extends Modal {
 					this.renderList();
 				});
 			});
+
 
 		this.listContainer = this.contentEl.createDiv();
 		this.listContainer.style.maxHeight = "400px";
@@ -102,35 +110,55 @@ export class TimekeepMergerModal extends Modal {
 				const timekeep: Timekeep = {
 					entries: [],
 				};
-
+				
+				let allEntries: TimeEntry[] = [];
 				for (const result of this.selectedResults) {
-					const processEntries = (
-						entries: TimeEntry[],
-						filePath: string
-					): TimeEntry[] => {
-						return entries.map((entry) => {
-							const newSubEntries = entry.subEntries
-								? processEntries(entry.subEntries, filePath)
-								: null;
-							const fileName = filePath.substring(
-								0,
-								filePath.lastIndexOf(".")
-							);
-							return {
-								...entry,
-								name: `[[${fileName}]] - ${entry.name}`,
-								subEntries: newSubEntries,
-							};
-						});
-					};
-
-					const newEntries = processEntries(
-						result.timekeep.entries,
-						result.file.path
-					);
-
-					timekeep.entries = [...timekeep.entries, ...newEntries];
+					const filePath = result.file.path.replace(/\.md$/, '');
+					const entriesWithFileName = result.timekeep.entries.map(entry => ({
+						...entry,
+						name: `[[${filePath}]] - ${entry.name}`,
+					}));
+					allEntries.push(...entriesWithFileName);
 				}
+
+				// Filter for entries that have a valid startTime
+				let startedEntries = allEntries.filter(entry => entry.startTime && typeof entry.startTime.valueOf === 'function');
+
+
+				const startDate = this.startDateInput?.getValue();
+				const endDate = this.endDateInput?.getValue();
+
+				let filteredEntries = startedEntries;
+
+				if (startDate && endDate) {
+					const startParts = startDate.split('-').map(p => parseInt(p, 10));
+					const endParts = endDate.split('-').map(p => parseInt(p, 10));
+
+					const startTime = new Date(startParts[0], startParts[1] - 1, startParts[2]).getTime();
+					const endTime = new Date(endParts[0], endParts[1] - 1, endParts[2], 23, 59, 59, 999).getTime();
+
+					if (startTime > endTime) {
+						new Notice("Start date cannot be after end date.");
+						return;
+					}
+
+					filteredEntries = startedEntries.filter(entry => {
+						const entryStartTime = entry.startTime!.valueOf();
+						return entryStartTime >= startTime && entryStartTime <= endTime;
+					});
+
+				} else if (startDate || endDate) {
+					new Notice("Please select both a start and end date.");
+					return;
+				}
+
+				if (filteredEntries.length === 0) {
+					new Notice("No time entries found in the selected files or date range.");
+					return;
+				}
+				
+				timekeep.entries = filteredEntries.sort((a, b) => a.startTime!.valueOf() - b.startTime!.valueOf());
+
 
 				// Close after taking the results as closing resets the list
 				this.close();
@@ -265,6 +293,8 @@ export class TimekeepMergerModal extends Modal {
 		this.contentEl.empty();
 
 		this.searchInput = undefined;
+		this.startDateInput = undefined;
+		this.endDateInput = undefined;
 		this.listContainer = undefined;
 		this.loadingEl = undefined;
 	}
